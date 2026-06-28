@@ -1,11 +1,10 @@
 # Postal production stack for Coolify / Docker Compose
 # Postal 3.3.7 — no RabbitMQ (removed in v3), no host networking, no Traefik labels.
-# Coolify injects reverse-proxy routing for postal-web:5000; SMTP uses raw TCP port mapping.
+# Coolify injects env vars and Traefik routing; no env_file or Traefik labels required.
 
 x-postal-image: &postal-image
   image: ghcr.io/postalserver/postal:${POSTAL_VERSION:-3.3.7}
-  # Official Postal image is amd64-only. Pin platform so ARM64 hosts (Apple Silicon,
-  # Graviton, etc.) pull and run the image via emulation instead of failing on pull.
+  # Official Postal image is amd64-only. Pin platform so ARM64 hosts pull amd64 via emulation.
   platform: linux/amd64
 
 x-postal-healthcheck: &postal-healthcheck-defaults
@@ -14,15 +13,37 @@ x-postal-healthcheck: &postal-healthcheck-defaults
   retries: 5
   start_period: 60s
 
+# Shared env for Postal services. Coolify auto-generates SERVICE_* secrets when declared on mariadb.
+x-postal-env: &postal-env
+  DATABASE_HOST: mariadb
+  DATABASE_PORT: "3306"
+  DATABASE_NAME: ${DATABASE_NAME:-postal}
+  DATABASE_USER: ${DATABASE_USER:-postal}
+  DATABASE_PASSWORD: ${SERVICE_PASSWORD_MARIADB}
+  DATABASE_ROOT_PASSWORD: ${SERVICE_PASSWORD_MARIADB_ROOT}
+  SECRET_KEY: ${SERVICE_BASE64_64_SECRET}
+  RAILS_ENV: ${RAILS_ENV:-production}
+  POSTAL_HOSTNAME: ${POSTAL_HOSTNAME}
+  POSTAL_WEB_HOST: ${POSTAL_WEB_HOST}
+  POSTAL_SMTP_HOST: ${POSTAL_SMTP_HOST:-${POSTAL_WEB_HOST}}
+  DNS_MX: ${DNS_MX:-mx1.${POSTAL_HOSTNAME}}
+  DNS_SPF: ${DNS_SPF:-spf.${POSTAL_HOSTNAME}}
+  DNS_DKIM_SELECTOR: ${DNS_DKIM_SELECTOR:-postal}
+  DNS_RETURN_PATH: ${DNS_RETURN_PATH:-rp.${POSTAL_HOSTNAME}}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+  INITIAL_ADMIN_FIRST_NAME: ${INITIAL_ADMIN_FIRST_NAME:-Admin}
+  INITIAL_ADMIN_LAST_NAME: ${INITIAL_ADMIN_LAST_NAME:-User}
+  INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+  WAIT_FOR_TIMEOUT: ${WAIT_FOR_TIMEOUT:-120}
+
 # Shared settings for all long-running Postal processes
 x-postal-common: &postal-common
   <<: *postal-image
-  env_file:
-    - .env
+  platform: linux/amd64
   environment:
-    # Wait for MariaDB before starting (built-in container entrypoint feature)
+    <<: *postal-env
     WAIT_FOR_TARGETS: mariadb:3306
-    WAIT_FOR_TIMEOUT: ${WAIT_FOR_TIMEOUT:-120}
   networks:
     - postal-net
   restart: unless-stopped
@@ -45,20 +66,21 @@ x-postal-common: &postal-common
 services:
   # ---------------------------------------------------------------------------
   # MariaDB 10.11 LTS — main and message database backend
+  # Declares Coolify magic vars so passwords/secrets are auto-generated on deploy.
   # ---------------------------------------------------------------------------
   mariadb:
     image: mariadb:10.11
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      MARIADB_ROOT_PASSWORD: ${DATABASE_ROOT_PASSWORD}
-      MARIADB_DATABASE: ${DATABASE_NAME}
-      MARIADB_USER: ${DATABASE_USER}
-      MARIADB_PASSWORD: ${DATABASE_PASSWORD}
+      SERVICE_PASSWORD_MARIADB_ROOT:
+      SERVICE_PASSWORD_MARIADB:
+      SERVICE_BASE64_64_SECRET:
+      MARIADB_ROOT_PASSWORD: ${SERVICE_PASSWORD_MARIADB_ROOT}
+      MARIADB_DATABASE: ${DATABASE_NAME:-postal}
+      MARIADB_USER: ${DATABASE_USER:-postal}
+      MARIADB_PASSWORD: ${SERVICE_PASSWORD_MARIADB}
     volumes:
       - mariadb-data:/var/lib/mysql
-      # Grants postal-* database prefix on first init only
       - ./scripts/mariadb-init.sh:/docker-entrypoint-initdb.d/10-postal-grants.sh:ro
     networks:
       - postal-net
@@ -76,19 +98,16 @@ services:
 
   # ---------------------------------------------------------------------------
   # One-shot initializer: render config, generate signing key, migrate DB, admin
+  # Bypasses Postal entrypoint — runs init.sh directly as root.
   # ---------------------------------------------------------------------------
   postal-init:
     <<: *postal-image
     platform: linux/amd64
     restart: "no"
-    env_file:
-      - .env
-    environment:
-      WAIT_FOR_TARGETS: mariadb:3306
-      WAIT_FOR_TIMEOUT: ${WAIT_FOR_TIMEOUT:-120}
-    # Runs as root so it can write to the postal-config volume, then chowns for the postal user.
     user: "0:0"
-    command: ["/bin/bash", "/scripts/init.sh"]
+    entrypoint: ["/bin/bash", "/scripts/init.sh"]
+    environment:
+      <<: *postal-env
     volumes:
       - ./config:/templates:ro
       - ./scripts:/scripts:ro
@@ -100,18 +119,18 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # Postal web UI and API — exposed internally on port 5000 for Coolify/Traefik
+  # Postal web UI — Coolify routes HTTPS via SERVICE_URL_POSTAL-WEB_5000
   # ---------------------------------------------------------------------------
   postal-web:
     <<: *postal-common
-    platform: linux/amd64
     command: postal web-server
     environment:
+      <<: *postal-env
       WAIT_FOR_TARGETS: mariadb:3306
-      WAIT_FOR_TIMEOUT: ${WAIT_FOR_TIMEOUT:-120}
+      SERVICE_URL_POSTAL-WEB_5000:
       BIND_ADDRESS: 0.0.0.0
       PORT: "5000"
-    expose:
+    ports:
       - "5000"
     healthcheck:
       <<: *postal-healthcheck-defaults
@@ -124,11 +143,10 @@ services:
       - ./scripts/healthcheck.sh:/scripts/healthcheck.sh:ro
 
   # ---------------------------------------------------------------------------
-  # Postal background worker — processes inbound/outbound mail queues
+  # Postal background worker
   # ---------------------------------------------------------------------------
   postal-worker:
     <<: *postal-common
-    platform: linux/amd64
     command: postal worker
     healthcheck:
       <<: *postal-healthcheck-defaults
@@ -141,13 +159,10 @@ services:
       - ./scripts/healthcheck.sh:/scripts/healthcheck.sh:ro
 
   # ---------------------------------------------------------------------------
-  # Postal SMTP server — raw TCP ports (not routed through HTTP Traefik)
-  # Port 587 maps to container port 25 for standard submission (STARTTLS).
-  # Port 465 is intentionally omitted (implicit TLS vs STARTTLS mismatch).
+  # Postal SMTP — raw TCP ports (not routed through HTTP Traefik)
   # ---------------------------------------------------------------------------
   postal-smtp:
     <<: *postal-common
-    platform: linux/amd64
     command: postal smtp-server
     cap_add:
       - NET_BIND_SERVICE
@@ -170,12 +185,7 @@ networks:
 
 volumes:
   mariadb-data:
-    name: postal-mariadb-data
   postal-config:
-    name: postal-config
   postal-data:
-    name: postal-data
   postal-uploads:
-    name: postal-uploads
   postal-logs:
-    name: postal-logs

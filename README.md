@@ -229,18 +229,24 @@ In Coolify, create a new **Docker Compose** application and point it at this rep
 
 ### 2. Set environment variables
 
-In Coolify's environment variable UI, add all variables from [`.env.example`](.env.example). Coolify injects these at deploy time — no `.env` file is committed.
+Coolify **auto-generates** database passwords and `SECRET_KEY` via magic variables in `docker-compose.yml` (`SERVICE_PASSWORD_*`, `SERVICE_BASE64_64_SECRET`). You only need to set:
 
-Generate secrets:
+| Variable | Required | Example |
+|----------|----------|---------|
+| `POSTAL_HOSTNAME` | Yes | `example.com` |
+| `POSTAL_WEB_HOST` | Yes* | `postal.example.com` |
+| `INITIAL_ADMIN_EMAIL` | Yes | `admin@example.com` |
+| `INITIAL_ADMIN_PASSWORD` | Yes | strong password |
+| `INITIAL_ADMIN_FIRST_NAME` | No | `Admin` |
+| `INITIAL_ADMIN_LAST_NAME` | No | `User` |
 
-```bash
-openssl rand -hex 64   # SECRET_KEY
-openssl rand -base64 32  # DATABASE_PASSWORD, DATABASE_ROOT_PASSWORD
-```
+\*If you assign a domain to **`postal-web`** in Coolify, `POSTAL_WEB_HOST` can be omitted — `init.sh` reads `SERVICE_FQDN_POSTAL-WEB` automatically.
+
+Do **not** set `DATABASE_ROOT_PASSWORD` or `SECRET_KEY` manually unless overriding Coolify's generated values.
 
 ### 3. Configure the web service domain
 
-Assign your domain (e.g. `postal.example.com`) to the **`postal-web`** service on **port 5000**. Coolify/Traefik handles TLS termination automatically.
+Assign your domain (e.g. `postal.example.com`) to the **`postal-web`** service. The compose file declares `SERVICE_URL_POSTAL-WEB_5000` and `ports: "5000"` so Coolify/Traefik routes HTTPS automatically.
 
 Do **not** route SMTP through Traefik — SMTP uses raw TCP and is published directly on the host via `ports` in `docker-compose.yml`.
 

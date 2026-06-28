@@ -10,27 +10,56 @@ log() {
   echo "[postal-init] $*"
 }
 
+# Coolify can provide FQDN via SERVICE_FQDN_* when a domain is assigned to postal-web.
+apply_coolify_defaults() {
+  : "${DATABASE_HOST:=mariadb}"
+  : "${DATABASE_PORT:=3306}"
+  : "${DATABASE_NAME:=postal}"
+  : "${DATABASE_USER:=postal}"
+  : "${RAILS_ENV:=production}"
+  : "${DNS_DKIM_SELECTOR:=postal}"
+
+  if [ -z "${POSTAL_WEB_HOST:-}" ]; then
+    POSTAL_WEB_HOST="${SERVICE_FQDN_POSTAL-WEB:-${SERVICE_FQDN_POSTAL_WEB:-}}"
+    export POSTAL_WEB_HOST
+  fi
+
+  : "${POSTAL_SMTP_HOST:=${POSTAL_WEB_HOST}}"
+  export POSTAL_SMTP_HOST
+
+  if [ -z "${DNS_MX:-}" ] && [ -n "${POSTAL_HOSTNAME:-}" ]; then
+    DNS_MX="mx1.${POSTAL_HOSTNAME}"
+    export DNS_MX
+  fi
+  if [ -z "${DNS_SPF:-}" ] && [ -n "${POSTAL_HOSTNAME:-}" ]; then
+    DNS_SPF="spf.${POSTAL_HOSTNAME}"
+    export DNS_SPF
+  fi
+  if [ -z "${DNS_RETURN_PATH:-}" ] && [ -n "${POSTAL_HOSTNAME:-}" ]; then
+    DNS_RETURN_PATH="rp.${POSTAL_HOSTNAME}"
+    export DNS_RETURN_PATH
+  fi
+}
+
 require_var() {
   local name="$1"
   if [ -z "${!name:-}" ]; then
     log "ERROR: required environment variable ${name} is not set"
+    log "Set it in Coolify Environment Variables or assign a domain to postal-web for auto FQDN."
     exit 1
   fi
 }
+
+log "Starting (arch=$(uname -m), user=$(id -un))"
+
+apply_coolify_defaults
 
 require_var POSTAL_HOSTNAME
 require_var POSTAL_WEB_HOST
 require_var POSTAL_SMTP_HOST
 require_var SECRET_KEY
-require_var DATABASE_HOST
-require_var DATABASE_USER
 require_var DATABASE_PASSWORD
 require_var DATABASE_NAME
-
-: "${RAILS_ENV:=production}"
-: "${DATABASE_PORT:=3306}"
-: "${DNS_DKIM_SELECTOR:=postal}"
-: "${DNS_MX:=mx1.${POSTAL_HOSTNAME}}"
 
 # Substitute ${VAR} placeholders from the environment (Postal image has no envsubst).
 render_template() {
@@ -119,7 +148,6 @@ fix_config_permissions() {
 }
 
 main() {
-  log "Starting Postal initialization..."
   render_config
   generate_signing_key
   fix_config_permissions
