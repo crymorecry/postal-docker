@@ -1,0 +1,80 @@
+# Postal configuration template (version 2 format)
+# Rendered at deploy time by scripts/init.sh — do not edit /config/postal.yml directly.
+# Set values via environment variables in .env
+
+version: 2
+
+postal:
+  web_hostname: ${POSTAL_WEB_HOST}
+  web_protocol: https
+  smtp_hostname: ${POSTAL_SMTP_HOST}
+  use_ip_pools: false
+  default_maximum_delivery_attempts: 18
+  default_maximum_hold_expiry_days: 7
+  default_suppression_list_automatic_removal_days: 30
+  default_spam_threshold: 5
+  default_spam_failure_threshold: 20
+  use_local_ns_for_domain_verification: false
+  use_resent_sender_header: true
+  signing_key_path: /config/signing.key
+  smtp_relays: []
+  trusted_proxies: []
+  allowed_request_destinations: []
+  queued_message_lock_stale_days: 1
+  batch_queued_messages: true
+
+web_server:
+  default_port: 5000
+  default_bind_address: 0.0.0.0
+  max_threads: 5
+
+worker:
+  default_health_server_port: 9090
+  default_health_server_bind_address: 0.0.0.0
+  threads: 2
+
+main_db:
+  host: ${DATABASE_HOST}
+  port: ${DATABASE_PORT}
+  username: ${DATABASE_USER}
+  password: ${DATABASE_PASSWORD}
+  database: ${DATABASE_NAME}
+  pool_size: 5
+  encoding: utf8mb4
+
+message_db:
+  host: ${DATABASE_HOST}
+  port: ${DATABASE_PORT}
+  username: ${DATABASE_USER}
+  password: ${DATABASE_PASSWORD}
+  encoding: utf8mb4
+  database_name_prefix: postal
+
+logging:
+  rails_log_enabled: false
+  sentry_dsn:
+  enabled: true
+  highlighting_enabled: false
+
+dns:
+  mx_records:
+__DNS_MX_RECORDS__
+  spf_include: ${DNS_SPF}
+  return_path_domain: ${DNS_RETURN_PATH}
+  route_domain: routes.${POSTAL_HOSTNAME}
+  track_domain: track.${POSTAL_HOSTNAME}
+  helo_hostname: ${POSTAL_SMTP_HOST}
+  dkim_identifier: ${DNS_DKIM_SELECTOR}
+  domain_verify_prefix: postal-verification
+  custom_return_path_prefix: psrp
+  timeout: 5
+  resolv_conf_path: /etc/resolv.conf
+
+rails:
+  environment: ${RAILS_ENV}
+  secret_key: ${SECRET_KEY}
+
+migration_waiter:
+  enabled: true
+  attempts: 120
+  sleep_time: 2

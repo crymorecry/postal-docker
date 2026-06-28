@@ -1,0 +1,173 @@
+# Postal production stack for Coolify / Docker Compose
+# Postal 3.3.7 — no RabbitMQ (removed in v3), no host networking, no Traefik labels.
+# Coolify injects reverse-proxy routing for postal-web:5000; SMTP uses raw TCP port mapping.
+
+x-postal-image: &postal-image
+  image: ghcr.io/postalserver/postal:${POSTAL_VERSION:-3.3.7}
+
+x-postal-healthcheck: &postal-healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 60s
+
+# Shared settings for all long-running Postal processes
+x-postal-common: &postal-common
+  <<: *postal-image
+  env_file:
+    - .env
+  environment:
+    # Wait for MariaDB before starting (built-in container entrypoint feature)
+    WAIT_FOR_TARGETS: mariadb:3306
+    WAIT_FOR_TIMEOUT: ${WAIT_FOR_TIMEOUT:-120}
+  networks:
+    - postal-net
+  restart: unless-stopped
+  volumes:
+    - postal-config:/config:ro
+    - postal-data:/opt/postal/data
+    - postal-uploads:/opt/postal/uploads
+    - postal-logs:/var/log/postal
+  depends_on:
+    mariadb:
+      condition: service_healthy
+    postal-init:
+      condition: service_completed_successfully
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # ---------------------------------------------------------------------------
+  # MariaDB 10.11 LTS — main and message database backend
+  # ---------------------------------------------------------------------------
+  mariadb:
+    image: mariadb:10.11
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DATABASE_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DATABASE_NAME}
+      MARIADB_USER: ${DATABASE_USER}
+      MARIADB_PASSWORD: ${DATABASE_PASSWORD}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      # Grants postal-* database prefix on first init only
+      - ./scripts/mariadb-init.sh:/docker-entrypoint-initdb.d/10-postal-grants.sh:ro
+    networks:
+      - postal-net
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # One-shot initializer: render config, generate signing key, migrate DB, admin
+  # ---------------------------------------------------------------------------
+  postal-init:
+    <<: *postal-image
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      WAIT_FOR_TARGETS: mariadb:3306
+      WAIT_FOR_TIMEOUT: ${WAIT_FOR_TIMEOUT:-120}
+    # Use the Postal image entrypoint so WAIT_FOR_TARGETS is honored before init runs
+    command: ["/bin/bash", "/scripts/init.sh"]
+    volumes:
+      - ./config:/templates:ro
+      - ./scripts:/scripts:ro
+      - postal-config:/config
+    networks:
+      - postal-net
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Postal web UI and API — exposed internally on port 5000 for Coolify/Traefik
+  # ---------------------------------------------------------------------------
+  postal-web:
+    <<: *postal-common
+    command: postal web-server
+    environment:
+      WAIT_FOR_TARGETS: mariadb:3306
+      WAIT_FOR_TIMEOUT: ${WAIT_FOR_TIMEOUT:-120}
+      BIND_ADDRESS: 0.0.0.0
+      PORT: "5000"
+    expose:
+      - "5000"
+    healthcheck:
+      <<: *postal-healthcheck-defaults
+      test: ["CMD", "/scripts/healthcheck.sh", "web"]
+    volumes:
+      - postal-config:/config:ro
+      - postal-data:/opt/postal/data
+      - postal-uploads:/opt/postal/uploads
+      - postal-logs:/var/log/postal
+      - ./scripts/healthcheck.sh:/scripts/healthcheck.sh:ro
+
+  # ---------------------------------------------------------------------------
+  # Postal background worker — processes inbound/outbound mail queues
+  # ---------------------------------------------------------------------------
+  postal-worker:
+    <<: *postal-common
+    command: postal worker
+    healthcheck:
+      <<: *postal-healthcheck-defaults
+      test: ["CMD", "/scripts/healthcheck.sh", "worker"]
+    volumes:
+      - postal-config:/config:ro
+      - postal-data:/opt/postal/data
+      - postal-uploads:/opt/postal/uploads
+      - postal-logs:/var/log/postal
+      - ./scripts/healthcheck.sh:/scripts/healthcheck.sh:ro
+
+  # ---------------------------------------------------------------------------
+  # Postal SMTP server — raw TCP ports (not routed through HTTP Traefik)
+  # Port 587 maps to container port 25 for standard submission (STARTTLS).
+  # Port 465 is intentionally omitted (implicit TLS vs STARTTLS mismatch).
+  # ---------------------------------------------------------------------------
+  postal-smtp:
+    <<: *postal-common
+    command: postal smtp-server
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "25:25"
+      - "587:25"
+    healthcheck:
+      <<: *postal-healthcheck-defaults
+      test: ["CMD", "/scripts/healthcheck.sh", "smtp"]
+    volumes:
+      - postal-config:/config:ro
+      - postal-data:/opt/postal/data
+      - postal-uploads:/opt/postal/uploads
+      - postal-logs:/var/log/postal
+      - ./scripts/healthcheck.sh:/scripts/healthcheck.sh:ro
+
+networks:
+  postal-net:
+    driver: bridge
+
+volumes:
+  mariadb-data:
+    name: postal-mariadb-data
+  postal-config:
+    name: postal-config
+  postal-data:
+    name: postal-data
+  postal-uploads:
+    name: postal-uploads
+  postal-logs:
+    name: postal-logs

@@ -1,0 +1,28 @@
+# SMTP configuration template — merged into postal.yml at deploy time by scripts/init.sh
+
+smtp_server:
+  default_port: 25
+  default_bind_address: "::"
+  default_health_server_port: 9091
+  default_health_server_bind_address: 0.0.0.0
+  tls_enabled: false
+  tls_certificate_path: /config/smtp.cert
+  tls_private_key_path: /config/smtp.key
+  tls_ciphers:
+  ssl_version: SSLv23
+  proxy_protocol: false
+  log_connections: false
+  max_message_size: 14
+  log_ip_address_exclusion_matcher:
+
+smtp:
+  host: postal-smtp
+  port: 25
+  username:
+  password:
+  authentication_type: login
+  enable_starttls: false
+  enable_starttls_auto: true
+  openssl_verify_mode: peer
+  from_name: Postal
+  from_address: postal@${POSTAL_HOSTNAME}

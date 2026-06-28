@@ -1,0 +1,19 @@
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.key
+signing.key
+config/*.local.yml
+
+# OS and editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Docker
+docker-compose.override.yml
