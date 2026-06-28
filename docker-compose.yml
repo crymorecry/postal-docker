@@ -4,6 +4,9 @@
 
 x-postal-image: &postal-image
   image: ghcr.io/postalserver/postal:${POSTAL_VERSION:-3.3.7}
+  # Official Postal image is amd64-only. Pin platform so ARM64 hosts (Apple Silicon,
+  # Graviton, etc.) pull and run the image via emulation instead of failing on pull.
+  platform: linux/amd64
 
 x-postal-healthcheck: &postal-healthcheck-defaults
   interval: 30s
@@ -82,7 +85,8 @@ services:
     environment:
       WAIT_FOR_TARGETS: mariadb:3306
       WAIT_FOR_TIMEOUT: ${WAIT_FOR_TIMEOUT:-120}
-    # Use the Postal image entrypoint so WAIT_FOR_TARGETS is honored before init runs
+    # Runs as root so it can write to the postal-config volume, then chowns for the postal user.
+    user: "0:0"
     command: ["/bin/bash", "/scripts/init.sh"]
     volumes:
       - ./config:/templates:ro

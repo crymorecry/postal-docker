@@ -10,12 +10,6 @@ log() {
   echo "[postal-init] $*"
 }
 
-# Variables consumed by envsubst when rendering templates
-export POSTAL_HOSTNAME POSTAL_WEB_HOST POSTAL_SMTP_HOST
-export SECRET_KEY RAILS_ENV LOG_LEVEL
-export DATABASE_HOST DATABASE_PORT DATABASE_USER DATABASE_PASSWORD DATABASE_NAME
-export DNS_SPF DNS_DKIM_SELECTOR DNS_RETURN_PATH
-
 require_var() {
   local name="$1"
   if [ -z "${!name:-}" ]; then
@@ -38,6 +32,11 @@ require_var DATABASE_NAME
 : "${DNS_DKIM_SELECTOR:=postal}"
 : "${DNS_MX:=mx1.${POSTAL_HOSTNAME}}"
 
+# Substitute ${VAR} placeholders from the environment (Postal image has no envsubst).
+render_template() {
+  ruby "${SCRIPTS_DIR}/render-template.rb" "$1"
+}
+
 # Build YAML list for mx_records from comma-separated DNS_MX
 build_mx_records_yaml() {
   local IFS=','
@@ -55,23 +54,20 @@ render_config() {
   log "Rendering configuration templates..."
   mkdir -p "${CONFIG_DIR}"
 
-  local mx_file="${CONFIG_DIR}/mx-records.yaml"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local mx_file="${tmp_dir}/mx-records.yaml"
   build_mx_records_yaml > "${mx_file}"
 
-  # Render postal.yml with MX records substitution
-  envsubst \
-    '${POSTAL_HOSTNAME} ${POSTAL_WEB_HOST} ${POSTAL_SMTP_HOST} ${SECRET_KEY} ${RAILS_ENV} ${LOG_LEVEL} ${DATABASE_HOST} ${DATABASE_PORT} ${DATABASE_USER} ${DATABASE_PASSWORD} ${DATABASE_NAME} ${DNS_SPF} ${DNS_DKIM_SELECTOR} ${DNS_RETURN_PATH}' \
-    < "${TEMPLATES_DIR}/postal.yml" > "${CONFIG_DIR}/postal.yml.tmp"
+  render_template "${TEMPLATES_DIR}/postal.yml" > "${tmp_dir}/postal.yml.tmp"
 
   sed "/__DNS_MX_RECORDS__/{
     r ${mx_file}
     d
-  }" "${CONFIG_DIR}/postal.yml.tmp" > "${CONFIG_DIR}/postal.yml"
-  rm -f "${CONFIG_DIR}/postal.yml.tmp" "${mx_file}"
+  }" "${tmp_dir}/postal.yml.tmp" > "${CONFIG_DIR}/postal.yml"
+  rm -rf "${tmp_dir}"
 
-  envsubst \
-    '${POSTAL_HOSTNAME}' \
-    < "${TEMPLATES_DIR}/smtp.yml" >> "${CONFIG_DIR}/postal.yml"
+  render_template "${TEMPLATES_DIR}/smtp.yml" >> "${CONFIG_DIR}/postal.yml"
 
   log "Configuration written to ${CONFIG_DIR}/postal.yml"
 }
@@ -114,10 +110,19 @@ initialize_database() {
   fi
 }
 
+fix_config_permissions() {
+  if id postal >/dev/null 2>&1; then
+    chown -R postal:postal "${CONFIG_DIR}"
+  fi
+  chmod 644 "${CONFIG_DIR}/postal.yml" 2>/dev/null || true
+  chmod 600 "${CONFIG_DIR}/signing.key" 2>/dev/null || true
+}
+
 main() {
   log "Starting Postal initialization..."
   render_config
   generate_signing_key
+  fix_config_permissions
   initialize_database
   "${SCRIPTS_DIR}/create-user.sh"
   log "Postal initialization complete."

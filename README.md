@@ -43,10 +43,23 @@ Startup order: `mariadb` (healthy) → `postal-init` (one-shot) → web / worker
 - Outbound port 25 allowed (many cloud providers block this by default)
 - Reverse DNS (PTR) configured for your sending IP
 
+## ARM64 / Apple Silicon hosts
+
+The official Postal image is published for **linux/amd64** only. All Postal services pin `platform: linux/amd64` in `docker-compose.yml`, so deploys on ARM64 machines (Apple Silicon, AWS Graviton, Ampere, etc.) pull and run via Docker's QEMU emulation instead of failing with "no matching manifest for linux/arm64".
+
+MariaDB is **not** platform-pinned and runs natively on ARM64.
+
+| Component | ARM64 behavior |
+|-----------|----------------|
+| `mariadb` | Native ARM64 |
+| `postal-init`, `postal-web`, `postal-worker`, `postal-smtp` | amd64 via emulation |
+
+On ARM64 Linux servers, ensure binfmt/QEMU is available (Docker Desktop on macOS includes this). For production mail workloads, prefer an **amd64 VPS** when possible — emulation adds CPU overhead.
+
 ## Quick Start (Docker Compose)
 
 ```bash
-git clone https://github.com/your-org/postal-docker.git
+git clone https://github.com/fearlessfara/postal-docker.git
 cd postal-docker
 cp .env.example .env
 # Edit .env with your values (see Configuration below)
