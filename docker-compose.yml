@@ -79,6 +79,7 @@ services:
   # ---------------------------------------------------------------------------
   postal-init:
     <<: *postal-image
+    platform: linux/amd64
     restart: "no"
     env_file:
       - .env
@@ -103,6 +104,7 @@ services:
   # ---------------------------------------------------------------------------
   postal-web:
     <<: *postal-common
+    platform: linux/amd64
     command: postal web-server
     environment:
       WAIT_FOR_TARGETS: mariadb:3306
@@ -126,6 +128,7 @@ services:
   # ---------------------------------------------------------------------------
   postal-worker:
     <<: *postal-common
+    platform: linux/amd64
     command: postal worker
     healthcheck:
       <<: *postal-healthcheck-defaults
@@ -144,6 +147,7 @@ services:
   # ---------------------------------------------------------------------------
   postal-smtp:
     <<: *postal-common
+    platform: linux/amd64
     command: postal smtp-server
     cap_add:
       - NET_BIND_SERVICE

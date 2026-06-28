@@ -361,6 +361,33 @@ Common causes:
 - MariaDB not healthy yet (increase `WAIT_FOR_TIMEOUT`)
 - Missing required environment variables
 
+### `exec /docker-entrypoint.sh: exec format error` (postal-init / Postal services)
+
+This means the **Postal image is amd64** but your Coolify server CPU is **ARM64** (e.g. Oracle Ampere, AWS Graviton) and **QEMU emulation is not enabled**.
+
+Check your server architecture (SSH into the Coolify host):
+
+```bash
+uname -m
+# aarch64 = ARM64 — Postal needs amd64 emulation or an amd64 VPS
+```
+
+**Option A (recommended for production mail):** Use an **x86_64 / amd64** VPS for Coolify.
+
+**Option B:** Enable amd64 emulation on the ARM server:
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install amd64
+```
+
+Verify emulation works:
+
+```bash
+docker run --rm --platform linux/amd64 ghcr.io/postalserver/postal:3.3.7 postal version
+```
+
+Then redeploy in Coolify. MariaDB can stay on native ARM64; only the Postal containers require amd64.
+
 Re-run init manually:
 
 ```bash
