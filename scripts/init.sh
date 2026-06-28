@@ -55,22 +55,19 @@ render_config() {
   log "Rendering configuration templates..."
   mkdir -p "${CONFIG_DIR}"
 
-  local mx_yaml
-  mx_yaml="$(build_mx_records_yaml)"
+  local mx_file="${CONFIG_DIR}/mx-records.yaml"
+  build_mx_records_yaml > "${mx_file}"
 
   # Render postal.yml with MX records substitution
   envsubst \
     '${POSTAL_HOSTNAME} ${POSTAL_WEB_HOST} ${POSTAL_SMTP_HOST} ${SECRET_KEY} ${RAILS_ENV} ${LOG_LEVEL} ${DATABASE_HOST} ${DATABASE_PORT} ${DATABASE_USER} ${DATABASE_PASSWORD} ${DATABASE_NAME} ${DNS_SPF} ${DNS_DKIM_SELECTOR} ${DNS_RETURN_PATH}' \
     < "${TEMPLATES_DIR}/postal.yml" > "${CONFIG_DIR}/postal.yml.tmp"
 
-  awk -v mx="${mx_yaml}" '
-    /__DNS_MX_RECORDS__/ {
-      print mx
-      next
-    }
-    { print }
-  ' "${CONFIG_DIR}/postal.yml.tmp" > "${CONFIG_DIR}/postal.yml"
-  rm -f "${CONFIG_DIR}/postal.yml.tmp"
+  sed "/__DNS_MX_RECORDS__/{
+    r ${mx_file}
+    d
+  }" "${CONFIG_DIR}/postal.yml.tmp" > "${CONFIG_DIR}/postal.yml"
+  rm -f "${CONFIG_DIR}/postal.yml.tmp" "${mx_file}"
 
   envsubst \
     '${POSTAL_HOSTNAME}' \
