@@ -25,7 +25,7 @@ x-postal-env: &postal-env
   RAILS_ENV: ${RAILS_ENV:-production}
   POSTAL_HOSTNAME: ${POSTAL_HOSTNAME}
   POSTAL_WEB_HOST: ${POSTAL_WEB_HOST}
-  POSTAL_SMTP_HOST: ${POSTAL_SMTP_HOST:-${POSTAL_WEB_HOST}}
+  POSTAL_SMTP_HOST: ${POSTAL_SMTP_HOST}
   DNS_MX: ${DNS_MX:-mx1.${POSTAL_HOSTNAME}}
   DNS_SPF: ${DNS_SPF:-spf.${POSTAL_HOSTNAME}}
   DNS_DKIM_SELECTOR: ${DNS_DKIM_SELECTOR:-postal}
@@ -127,7 +127,6 @@ services:
     environment:
       <<: *postal-env
       WAIT_FOR_TARGETS: mariadb:3306
-      SERVICE_URL_POSTAL-WEB_5000:
       BIND_ADDRESS: 0.0.0.0
       PORT: "5000"
     ports:
